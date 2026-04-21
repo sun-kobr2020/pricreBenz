@@ -8,8 +8,8 @@ public class FuelConfig {
     public static final String USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
 
     // Координаты поиска
-    public static final double LAT = 56.838011; //широту подставлять из даннх Tbox
-    public static final double LNG = 60.597465; //долготу подставлять из данных Tbox
+    public static final double LAT = 44.6301558; //широту подставлять из даннх Tbox
+    public static final double LNG = 40.11319870000001; //долготу подставлять из данных Tbox
 
     // Карта отслеживаемого топлива, у каждого топлива есть своё ID, можно вывести настройку топлива опционально
     public static final Map<Integer, String> FUEL_MAP = new LinkedHashMap<>() {{
@@ -17,7 +17,8 @@ public class FuelConfig {
         put(11, "Аи-95");
         put(14, "Аи-98");
         put(16, "Аи-100");
-        put(17, "ДТ");
-        put(19, "Газ (LPG)");
+        put(3, "ДТ");
+        put(18, "Метан/КПГ"); // Исправлено с 19 на 18 (по цене 28.62)
+        put(1, "Газ (LPG)");
     }};
 }

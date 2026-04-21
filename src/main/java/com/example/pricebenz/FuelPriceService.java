@@ -34,17 +34,50 @@ public class FuelPriceService {
     public double findExactPrice(JSONObject azs, int targetId, String fuelName) {
         JSONArray fuels = azs.optJSONArray("fuels");
         if (fuels == null) return 0;
-        // Упрощаем регулярку по совету IDE: \\D означает "не цифра"
-        String digits = fuelName.replaceAll("\\D", "");
+
+        String search = fuelName.toLowerCase();
+
         for (int i = 0; i < fuels.length(); i++) {
             JSONObject f = fuels.getJSONObject(i);
-            String label = f.optString("fuelId", "");
-            if (f.optInt("fuelIdRaw") == targetId || (!digits.isEmpty() && label.contains(digits))) {
+            String label = f.optString("fuelId", "").toLowerCase();
+            int rawId = f.optInt("fuelIdRaw", -1);
+
+            // 1. Сначала проверяем точный ID (если он есть в ответе)
+            if (rawId == targetId) return f.optDouble("fuelPrice", 0);
+
+            // 2. ГАЗ: СУГ (LPG / Пропан)
+            if (search.contains("газ") || search.contains("lpg") || search.contains("суг") || search.contains("пропан")) {
+                if (label.contains("суг") || label.contains("газ") || label.contains("пропан") || label.contains("lpg")) {
+                    return f.optDouble("fuelPrice", 0);
+                }
+            }
+
+            // 3. ГАЗ: КПГ (Метан / CNG)
+            if (search.contains("метан") || search.contains("кпг") || search.contains("cng")) {
+                if (label.contains("кпг") || label.contains("метан") || label.contains("cng")) {
+                    return f.optDouble("fuelPrice", 0);
+                }
+            }
+
+            // 4. ДИЗЕЛЬ: Дт, Дт+, Дизель
+            if (search.contains("дт") || search.contains("диз")) {
+                if (label.contains("дт") || label.contains("диз")) {
+                    return f.optDouble("fuelPrice", 0);
+                }
+            }
+
+            // 5. БЕНЗИНЫ: Поиск цифр (92, 95, 98, 100)
+            // replaceAll("\\D", "") оставит только цифры из названия
+            String searchDigits = fuelName.replaceAll("\\D", "");
+            String labelDigits = label.replaceAll("\\D", "");
+
+            if (!searchDigits.isEmpty() && !labelDigits.isEmpty() && searchDigits.equals(labelDigits)) {
                 return f.optDouble("fuelPrice", 0);
             }
         }
         return 0;
     }
+
 
     public double getAveragePrice(JSONObject avgPricesMap, int targetId) {
         if (avgPricesMap == null) return 0;
