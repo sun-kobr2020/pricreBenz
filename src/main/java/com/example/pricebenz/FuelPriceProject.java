@@ -25,7 +25,7 @@ public class FuelPriceProject {
 
             // 2. ПОЛУЧЕНИЕ ДАННЫХ
             // Выбираем ID топлива для приоритетного поиска (например, 11 для Аи-95)
-            int targetFuelId = 8;
+            int targetFuelId = 11;
             String targetFuelName = FuelConfig.FUEL_MAP.get(targetFuelId);
 
             // fetchAllData делает сразу два запроса к API (список АЗС и средние цены)
