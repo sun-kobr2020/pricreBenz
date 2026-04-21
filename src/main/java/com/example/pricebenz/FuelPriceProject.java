@@ -1,102 +1,101 @@
 package com.example.pricebenz;
 
-import org.json.JSONArray;
 import org.json.JSONObject;
-
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
-import java.util.Locale;
 
 public class FuelPriceProject {
-    public static void main(String[] args) throws Exception {
-        FuelApiClient api = new FuelApiClient();
-        FuelPriceService service = new FuelPriceService();
-        System.setOut(new PrintStream(System.out, true, StandardCharsets.UTF_8));
-        api.warmup(); // Инициализация сессии
+    public static void main(String[] args) {
+        try {
+            System.setOut(new PrintStream(System.out, true, StandardCharsets.UTF_8));
+            FuelApiClient api = new FuelApiClient();
+            FuelPriceService service = new FuelPriceService();
 
-        // Готовим запросы
-        String listPayload = String.format(Locale.US, "{\"limit\":3,\"fuelId\":11,\"lat\":%.6f,\"lng\":%.6f}",
-                FuelConfig.LAT, FuelConfig.LNG);
-        String avgPayload = String.format(Locale.US, "{\"lat\":%.6f,\"lng\":%.6f}",
-                FuelConfig.LAT, FuelConfig.LNG);
+            api.warmup();
 
-        // Получаем данные
-        JSONObject listJson = new JSONObject(api.sendPost("/api/9/near/list", listPayload));
-        JSONObject avgJson = new JSONObject(api.sendPost("/api/9/avgprices", avgPayload));
+            // 1. Получаем данные (напр. для Аи-95, ID=11)
+            int targetId = 17;
+            FuelData data = service.fetchAllData(api, targetId);
 
-        // Извлекаем базовые объекты
-        JSONObject dataObj = listJson.optJSONObject("data");
-        JSONArray azsList = (dataObj != null) ? dataObj.optJSONArray("list") : null;
-        JSONObject avgPricesMap = avgJson.optJSONObject("data") != null ?
-                avgJson.getJSONObject("data").optJSONObject("avgprice") : null;
+            // 2. Выводим информацию о заправке
+            printAzsInfo(data);
 
-        // Вывод информации об АЗС
-        if (azsList != null && azsList.length() > 0) {
-            JSONObject azs = azsList.getJSONObject(0);
-            System.out.println("\n=== БЛИЖАЙШАЯ АЗС ===");
-            System.out.println("Сеть:    " + (azs.optJSONObject("brand") != null ? azs.getJSONObject("brand").getString("name") : "Частная"));
-            System.out.println("Адрес:   " + azs.optString("address"));
-        } else {
-            System.out.println("\n[!] АЗС рядом не найдены.");
+            // 3. Выводим таблицу всех цен с пометками
+            printPriceTable(service, data);
+
+            // 4. Расчет расхода с указанием типа цены
+            processTripReport(service, data, targetId);
+
+        } catch (Exception e) {
+            System.err.println("Ошибка: " + e.getMessage());
         }
+    }
 
-        // Вывод таблицы цен
-        System.out.println("-------------------------");
+    private static void printAzsInfo(FuelData data) {
+        if (data.getAzsList() != null && data.getAzsList().length() > 0) {
+            JSONObject azs = data.getAzsList().getJSONObject(0);
+            JSONObject brand = azs.optJSONObject("brand");
+            String brandName = (brand != null) ? brand.optString("name", "Частная АЗС") : "Неизвестная сеть";
+
+            System.out.println("\n=== ИНФОРМАЦИЯ ОБ АЗС ===");
+            System.out.println("Сеть:    " + brandName);
+            System.out.println("Адрес:   " + azs.optString("address", "Адрес не указан"));
+        }
+    }
+
+    private static void printPriceTable(FuelPriceService service, FuelData data) {
+        System.out.println("\n--- СВОДКА ЦЕН ПО РЕГИОНУ ---");
         for (var entry : FuelConfig.FUEL_MAP.entrySet()) {
+            // Сначала ищем точную
             double price = 0;
             String type = "";
 
-            // 1. Пробуем точную
-            if (azsList != null && azsList.length() > 0) {
-                price = service.findExactPrice(azsList.getJSONObject(0), entry.getKey(), entry.getValue());
+            if (data.getAzsList() != null && data.getAzsList().length() > 0) {
+                price = service.findExactPrice(data.getAzsList().getJSONObject(0), entry.getKey(), entry.getValue());
                 if (price > 0) type = "[Точная]";
             }
 
-            // 2. Если нет точной, берем среднюю
-            if (price == 0) {
-                price = service.getAveragePrice(avgPricesMap, entry.getKey());
+            if (price <= 0) {
+                price = service.getAveragePrice(data.getAvgPricesMap(), entry.getKey());
                 if (price > 0) type = "[Средняя]";
             }
 
             if (price > 0) {
                 System.out.printf("%-10s: %6.2f руб. %s%n", entry.getValue(), price, type);
             } else {
-                System.out.printf("%-10s: Нет данных%n", entry.getValue());
+                System.out.printf("%-10s: нет данных%n", entry.getValue());
             }
         }
-        // --- ИМИТАЦИЯ ЗАПРАВКИ ---
-        int prevOdo = 50000;    // Пробег при прошлой заправке
-        int currentOdo = 50550; // Текущий пробег (проехали 550 км)
-        double fuelAdded = 40.0; // Сколько литров залили сейчас (до полного)
-        int targetFuelId = 11;  // Мы заправляемся Аи-95
+    }
 
-        // 1. Находим актуальную цену для расчетов
-        double currentPrice = 0;
-        // Ищем в нашем списке цен значение для Аи-95
-        // (Для примера возьмем из сервиса или напрямую из найденной АЗС)
-        if (azsList != null && azsList.length() > 0) {
-            currentPrice = service.findExactPrice(azsList.getJSONObject(0), targetFuelId, "Аи-95");
-        }
-        if (currentPrice == 0) {
-            currentPrice = service.getAveragePrice(avgPricesMap, targetFuelId);
+    private static void processTripReport(FuelPriceService service, FuelData data, int fuelId) {
+        TripCalculator calc = new TripCalculator();
+        String fuelName = FuelConfig.FUEL_MAP.getOrDefault(fuelId, "Топливо");
+
+        // Определяем цену и её тип для отчета
+        double price = 0;
+        String type = "";
+
+        if (data.getAzsList() != null && data.getAzsList().length() > 0) {
+            price = service.findExactPrice(data.getAzsList().getJSONObject(0), fuelId, fuelName);
+            if (price > 0) type = "[Точная]";
         }
 
-        // 2. Выполняем расчеты
-        TripCalculator calculator = new TripCalculator();
+        if (price <= 0) {
+            price = service.getAveragePrice(data.getAvgPricesMap(), fuelId);
+            if (price > 0) type = "[Средняя]";
+        }
 
-        if (currentPrice > 0) {
-            double totalCost = calculator.calculateTotalCost(fuelAdded, currentPrice);
-            double consumption = calculator.calculateConsumption(fuelAdded, currentOdo, prevOdo);
+        if (price > 0) {
+            double consumption = calc.calculateConsumption(40, 50550, 50000);
+            double totalCost = calc.calculateTotalCost(40, price);
 
             System.out.println("\n=== ОТЧЕТ ПО ЗАПРАВКЕ ===");
-            System.out.printf("Пробег между заправками: %d км%n", (currentOdo - prevOdo));
-            System.out.printf("Залито топлива:         %.2f л%n", fuelAdded);
-            System.out.printf("Цена за литр:           %.2f руб.%n", currentPrice);
-            System.out.println("-------------------------");
-            System.out.printf("Общая стоимость:        %.2f руб.%n", totalCost);
-            System.out.printf("СРЕДНИЙ РАСХОД:         %.2f л/100 км%n", consumption);
-        } else {
-            System.out.println("\n[!] Не удалось рассчитать стоимость: цена на Аи-95 не найдена.");
+            System.out.printf("Выбранное топливо:  %s%n", fuelName);
+            System.out.printf("Использована цена:  %.2f руб. %s%n", price, type);
+            System.out.printf("Средний расход:     %.2f л/100 км%n", consumption);
+            System.out.printf("Итого к оплате:     %.2f руб.%n", totalCost);
+            System.out.println("=========================\n");
         }
     }
 }
