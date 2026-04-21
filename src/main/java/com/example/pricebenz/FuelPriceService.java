@@ -51,4 +51,22 @@ public class FuelPriceService {
         JSONObject item = avgPricesMap.optJSONObject(String.valueOf(targetId));
         return (item != null) ? item.optDouble("avg", 0) : 0;
     }
+
+    public Fuel getBestFuelData(FuelData data, int id, String name) {
+        double price = 0;
+        String type = "";
+
+        if (data.getAzsList() != null && data.getAzsList().length() > 0) {
+            price = findExactPrice(data.getAzsList().getJSONObject(0), id, name);
+            if (price > 0) type = "[Точная]";
+        }
+
+        if (price <= 0) {
+            price = getAveragePrice(data.getAvgPricesMap(), id);
+            if (price > 0) type = "[Средняя]";
+        }
+
+        return (price > 0) ? new Fuel(name, price, type) : null;
+    }
+
 }

@@ -35,6 +35,7 @@ public class FuelApiClient {
     public String sendPost(String endpoint, String jsonBody) throws IOException, InterruptedException {
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(FuelConfig.BASE_URL + endpoint))
+                .timeout(java.time.Duration.ofSeconds(10)) // Тайм-аут на чтение
                 .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
                 .setHeader("Content-Type", "application/json")
                 .setHeader("Accept", "application/json")
@@ -42,7 +43,12 @@ public class FuelApiClient {
                 .setHeader("Referer", FuelConfig.BASE_URL + "/")
                 .setHeader("User-Agent", FuelConfig.USER_AGENT)
                 .build();
+        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
 
-        return client.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)).body();
+        // Проверка статуса ответа
+        if (response.statusCode() != 200) {
+            throw new IOException("Сервер вернул ошибку: " + response.statusCode());
+        }
+        return response.body();
     }
 }
