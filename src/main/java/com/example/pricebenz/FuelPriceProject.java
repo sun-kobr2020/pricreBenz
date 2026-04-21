@@ -2,97 +2,101 @@ package com.example.pricebenz;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
-import java.io.IOException;
+
 import java.io.PrintStream;
-import java.net.CookieManager;
-import java.net.CookiePolicy;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 
 public class FuelPriceProject {
-
-    public static void main(String[] args) throws IOException, InterruptedException {
-        // Принудительная кодировка UTF-8 для вывода в консоль
+    public static void main(String[] args) throws Exception {
+        FuelApiClient api = new FuelApiClient();
+        FuelPriceService service = new FuelPriceService();
         System.setOut(new PrintStream(System.out, true, StandardCharsets.UTF_8));
+        api.warmup(); // Инициализация сессии
 
-        // Настройка автоматического управления куками
-        CookieManager cookieManager = new CookieManager();
-        cookieManager.setCookiePolicy(CookiePolicy.ACCEPT_ALL);
+        // Готовим запросы
+        String listPayload = String.format(Locale.US, "{\"limit\":3,\"fuelId\":11,\"lat\":%.6f,\"lng\":%.6f}",
+                FuelConfig.LAT, FuelConfig.LNG);
+        String avgPayload = String.format(Locale.US, "{\"lat\":%.6f,\"lng\":%.6f}",
+                FuelConfig.LAT, FuelConfig.LNG);
 
-        // Создаем клиент с поддержкой HTTP/2 и авто-редиректами
-        HttpClient client = HttpClient.newBuilder()
-                .version(HttpClient.Version.HTTP_2)
-                .cookieHandler(cookieManager)
-                .followRedirects(HttpClient.Redirect.ALWAYS)
-                .build();
+        // Получаем данные
+        JSONObject listJson = new JSONObject(api.sendPost("/api/9/near/list", listPayload));
+        JSONObject avgJson = new JSONObject(api.sendPost("/api/9/avgprices", avgPayload));
 
-        // 1. ПРОГРЕВ: Заходим на главную для получения сессионных кук
-        HttpRequest warmupRequest = HttpRequest.newBuilder()
-                .uri(URI.create("https://multigo.ru/"))
-                .GET()
-                .setHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                .build();
+        // Извлекаем базовые объекты
+        JSONObject dataObj = listJson.optJSONObject("data");
+        JSONArray azsList = (dataObj != null) ? dataObj.optJSONArray("list") : null;
+        JSONObject avgPricesMap = avgJson.optJSONObject("data") != null ?
+                avgJson.getJSONObject("data").optJSONObject("avgprice") : null;
 
-        client.send(warmupRequest, HttpResponse.BodyHandlers.ofString());
-        System.out.println("Сессия инициализирована успешно.");
-
-        // 2. ОСНОВНОЙ ЗАПРОС
-        String apiUrl = "https://multigo.ru/api/9/near/list";
-        int targetFuelId = 11; // ID искомого топлива (95+)
-        double myLat = 55.753082;
-        double myLng = 37.601043;
-
-        String jsonPayload = String.format(Locale.US,
-                "{\"limit\":6,\"fuelId\":%d,\"lat\":%.6f,\"lng\":%.6f}",
-                targetFuelId, myLat, myLng
-        );
-
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(apiUrl))
-                .POST(HttpRequest.BodyPublishers.ofString(jsonPayload))
-                .setHeader("Content-Type", "application/json")
-                .setHeader("Accept", "application/json")
-                .setHeader("Origin", "https://multigo.ru")
-                .setHeader("Referer", "https://multigo.ru/")
-                .setHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                .build();
-
-        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-
-        // ОБРАБОТКА РЕЗУЛЬТАТА
-        if (response.statusCode() == 200) {
-            JSONObject jsonResponse = new JSONObject(response.body());
-
-            if (jsonResponse.has("data")) {
-                JSONArray list = jsonResponse.getJSONObject("data").getJSONArray("list");
-
-                if (list.length() > 0) {
-                    JSONObject azs = list.getJSONObject(0); // Ближайшая заправка
-                    String brand = azs.getJSONObject("brand").getString("name");
-                    String address = azs.getString("address");
-
-                    // Поиск цены нужного топлива в массиве fuels
-                    JSONArray fuels = azs.getJSONArray("fuels");
-                    double fuelPrice = 0;
-                    for (int i = 0; i < fuels.length(); i++) {
-                        if (fuels.getJSONObject(i).optInt("fuelIdRaw") == targetFuelId || i == 0) {
-                            fuelPrice = fuels.getJSONObject(i).getDouble("fuelPrice");
-                        }
-                    }
-
-                    System.out.println("\n=== ДАННЫЕ АЗС ===");
-                    System.out.println("Сеть:    " + brand);
-                    System.out.println("Адрес:   " + address);
-                    System.out.println("Топливо: Аи-95+");
-                    System.out.println("Цена:    " + fuelPrice + " руб.");
-                }
-            }
+        // Вывод информации об АЗС
+        if (azsList != null && azsList.length() > 0) {
+            JSONObject azs = azsList.getJSONObject(0);
+            System.out.println("\n=== БЛИЖАЙШАЯ АЗС ===");
+            System.out.println("Сеть:    " + (azs.optJSONObject("brand") != null ? azs.getJSONObject("brand").getString("name") : "Частная"));
+            System.out.println("Адрес:   " + azs.optString("address"));
         } else {
-            System.err.println("Ошибка API (код " + response.statusCode() + "): " + response.body());
+            System.out.println("\n[!] АЗС рядом не найдены.");
+        }
+
+        // Вывод таблицы цен
+        System.out.println("-------------------------");
+        for (var entry : FuelConfig.FUEL_MAP.entrySet()) {
+            double price = 0;
+            String type = "";
+
+            // 1. Пробуем точную
+            if (azsList != null && azsList.length() > 0) {
+                price = service.findExactPrice(azsList.getJSONObject(0), entry.getKey(), entry.getValue());
+                if (price > 0) type = "[Точная]";
+            }
+
+            // 2. Если нет точной, берем среднюю
+            if (price == 0) {
+                price = service.getAveragePrice(avgPricesMap, entry.getKey());
+                if (price > 0) type = "[Средняя]";
+            }
+
+            if (price > 0) {
+                System.out.printf("%-10s: %6.2f руб. %s%n", entry.getValue(), price, type);
+            } else {
+                System.out.printf("%-10s: Нет данных%n", entry.getValue());
+            }
+        }
+        // --- ИМИТАЦИЯ ЗАПРАВКИ ---
+        int prevOdo = 50000;    // Пробег при прошлой заправке
+        int currentOdo = 50550; // Текущий пробег (проехали 550 км)
+        double fuelAdded = 40.0; // Сколько литров залили сейчас (до полного)
+        int targetFuelId = 11;  // Мы заправляемся Аи-95
+
+        // 1. Находим актуальную цену для расчетов
+        double currentPrice = 0;
+        // Ищем в нашем списке цен значение для Аи-95
+        // (Для примера возьмем из сервиса или напрямую из найденной АЗС)
+        if (azsList != null && azsList.length() > 0) {
+            currentPrice = service.findExactPrice(azsList.getJSONObject(0), targetFuelId, "Аи-95");
+        }
+        if (currentPrice == 0) {
+            currentPrice = service.getAveragePrice(avgPricesMap, targetFuelId);
+        }
+
+        // 2. Выполняем расчеты
+        TripCalculator calculator = new TripCalculator();
+
+        if (currentPrice > 0) {
+            double totalCost = calculator.calculateTotalCost(fuelAdded, currentPrice);
+            double consumption = calculator.calculateConsumption(fuelAdded, currentOdo, prevOdo);
+
+            System.out.println("\n=== ОТЧЕТ ПО ЗАПРАВКЕ ===");
+            System.out.printf("Пробег между заправками: %d км%n", (currentOdo - prevOdo));
+            System.out.printf("Залито топлива:         %.2f л%n", fuelAdded);
+            System.out.printf("Цена за литр:           %.2f руб.%n", currentPrice);
+            System.out.println("-------------------------");
+            System.out.printf("Общая стоимость:        %.2f руб.%n", totalCost);
+            System.out.printf("СРЕДНИЙ РАСХОД:         %.2f л/100 км%n", consumption);
+        } else {
+            System.out.println("\n[!] Не удалось рассчитать стоимость: цена на Аи-95 не найдена.");
         }
     }
 }
