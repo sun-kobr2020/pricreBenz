@@ -21,13 +21,24 @@ public class FuelPriceService {
     }
 
     public Fuel getBestFuelData(FuelData data, int id, String name, boolean showWarning) {
+        // 1. Пытаемся найти точную цену на АЗС
         double price = findExactPriceInAzs(data, id, name);
         String type = (price > 0) ? "[Точная]" : "";
 
+        // 2. Если точной нет
         if (price <= 0) {
+            // Проверяем наличие "пары" (плюс/обычное) для вывода подсказки
             if (showWarning) checkPlusVersionAvailability(data, id, name);
+
+            // Пытаемся найти среднюю цену
             price = getAveragePrice(data.getAvgPricesMap(), id);
             type = (price > 0) ? "[Средняя]" : "";
+        }
+
+        // 3. НОВАЯ ЛОГИКА: Если цены нет ВООБЩЕ (ни точной, ни средней)
+        if (price <= 0 && showWarning) {
+            System.out.printf("[!] Извините, но для топлива %s (ID: %d) нет ни точной цены на АЗС, ни средней по региону.%n", name, id);
+            return null;
         }
 
         return (price > 0) ? new Fuel(name, price, type) : null;

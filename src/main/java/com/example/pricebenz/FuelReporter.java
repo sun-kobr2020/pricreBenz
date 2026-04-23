@@ -16,7 +16,7 @@ public class FuelReporter {
         }
     }
 
-    public void printTripReport(Fuel fuel, double fuelAdded, int currentOdo, int prevOdo) {
+    public void printTripReport(Fuel fuel, double fuelAdded, int currentOdo, int prevOdo, double lat, double lng) {
         TripCalculator calc = new TripCalculator();
 
         // Вычисляем пройденный путь
@@ -27,6 +27,7 @@ public class FuelReporter {
         double totalCost = calc.calculateTotalCost(fuelAdded, fuel.getPrice());
 
         System.out.println("\n=== ОТЧЕТ ПО ЗАПРАВКЕ ===");
+        System.out.printf("Координаты: %.6f; %.6f%n", lat, lng);
         System.out.println("Топливо:    " + fuel.getName());
         System.out.println("Цена:       " + fuel.getPrice() + " " + fuel.getType());
         System.out.println("-------------------------");
