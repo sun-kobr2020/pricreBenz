@@ -11,7 +11,7 @@ public class FuelPriceProject {
         try {
             // Создаем и запускаем приложение
             FuelApp app = new FuelApp();
-            app.run(12); // Запускаем для Аи-98+
+            app.run(12); // Выбери каким топливом заправлять
 
         } catch (Exception e) {
             System.err.println("[КРИТИЧЕСКАЯ ОШИБКА]: " + e.getMessage());
