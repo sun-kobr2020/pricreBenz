@@ -6,100 +6,62 @@ import java.util.Locale;
 
 public class FuelPriceService {
 
-    // Собирает данные из двух API в один объект FuelData
     public FuelData fetchAllData(FuelApiClient api, int targetFuelId) throws Exception {
+        int apiId = FuelIdMapper.getBaseId(targetFuelId);
+
         String listPayload = String.format(Locale.US, "{\"limit\":3,\"fuelId\":%d,\"lat\":%.6f,\"lng\":%.6f}",
-                targetFuelId, FuelConfig.LAT, FuelConfig.LNG);
+                apiId, FuelConfig.LAT, FuelConfig.LNG);
         String avgPayload = String.format(Locale.US, "{\"lat\":%.6f,\"lng\":%.6f}",
                 FuelConfig.LAT, FuelConfig.LNG);
 
-        JSONObject listJson = new JSONObject(api.sendPost("/api/9/near/list", listPayload));
-        JSONObject avgJson = new JSONObject(api.sendPost("/api/9/avgprices", avgPayload));
-
-        return new FuelData(listJson, avgJson);
+        return new FuelData(
+                new JSONObject(api.sendPost("/api/9/near/list", listPayload)),
+                new JSONObject(api.sendPost("/api/9/avgprices", avgPayload))
+        );
     }
 
-    // Универсальный поиск: сначала точная, если нет — средняя
-    public double findPrice(FuelData data, int fuelId, String fuelName) {
-        double price = 0;
-        if (data.getAzsList() != null && data.getAzsList().length() > 0) {
-            price = findExactPrice(data.getAzsList().getJSONObject(0), fuelId, fuelName);
-        }
+    public Fuel getBestFuelData(FuelData data, int id, String name, boolean showWarning) {
+        double price = findExactPriceInAzs(data, id, name);
+        String type = (price > 0) ? "[Точная]" : "";
+
         if (price <= 0) {
-            price = getAveragePrice(data.getAvgPricesMap(), fuelId);
+            if (showWarning) checkPlusVersionAvailability(data, id, name);
+            price = getAveragePrice(data.getAvgPricesMap(), id);
+            type = (price > 0) ? "[Средняя]" : "";
         }
-        return price;
+
+        return (price > 0) ? new Fuel(name, price, type) : null;
     }
 
-    public double findExactPrice(JSONObject azs, int targetId, String fuelName) {
-        JSONArray fuels = azs.optJSONArray("fuels");
+    private double findExactPriceInAzs(FuelData data, int id, String name) {
+        if (data.getAzsList() == null || data.getAzsList().length() == 0) return 0;
+        JSONArray fuels = data.getAzsList().getJSONObject(0).optJSONArray("fuels");
         if (fuels == null) return 0;
-
-        String search = fuelName.toLowerCase();
 
         for (int i = 0; i < fuels.length(); i++) {
             JSONObject f = fuels.getJSONObject(i);
-            String label = f.optString("fuelId", "").toLowerCase();
-            int rawId = f.optInt("fuelIdRaw", -1);
-
-            // 1. Сначала проверяем точный ID (если он есть в ответе)
-            if (rawId == targetId) return f.optDouble("fuelPrice", 0);
-
-            // 2. ГАЗ: СУГ (LPG / Пропан)
-            if (search.contains("газ") || search.contains("lpg") || search.contains("суг") || search.contains("пропан")) {
-                if (label.contains("суг") || label.contains("газ") || label.contains("пропан") || label.contains("lpg")) {
-                    return f.optDouble("fuelPrice", 0);
-                }
-            }
-
-            // 3. ГАЗ: КПГ (Метан / CNG)
-            if (search.contains("метан") || search.contains("кпг") || search.contains("cng")) {
-                if (label.contains("кпг") || label.contains("метан") || label.contains("cng")) {
-                    return f.optDouble("fuelPrice", 0);
-                }
-            }
-
-            // 4. ДИЗЕЛЬ: Дт, Дт+, Дизель
-            if (search.contains("дт") || search.contains("диз")) {
-                if (label.contains("дт") || label.contains("диз")) {
-                    return f.optDouble("fuelPrice", 0);
-                }
-            }
-
-            // 5. БЕНЗИНЫ: Поиск цифр (92, 95, 98, 100)
-            // replaceAll("\\D", "") оставит только цифры из названия
-            String searchDigits = fuelName.replaceAll("\\D", "");
-            String labelDigits = label.replaceAll("\\D", "");
-
-            if (!searchDigits.isEmpty() && !labelDigits.isEmpty() && searchDigits.equals(labelDigits)) {
+            if (f.optInt("fuelIdRaw") == id || FuelMatcher.isMatch(f.optString("fuelId"), name)) {
                 return f.optDouble("fuelPrice", 0);
             }
         }
         return 0;
     }
 
+    private void checkPlusVersionAvailability(FuelData data, int id, String name) {
+        boolean isPlusRequested = name.contains("+");
+        int altId = isPlusRequested ? FuelIdMapper.getBaseId(id) : FuelIdMapper.getPlusId(id);
+        String altName = isPlusRequested ? name.replace("+", "") : name + "+";
 
-    public double getAveragePrice(JSONObject avgPricesMap, int targetId) {
-        if (avgPricesMap == null) return 0;
-        JSONObject item = avgPricesMap.optJSONObject(String.valueOf(targetId));
+        if (findExactPriceInAzs(data, altId, altName) > 0) {
+            System.out.printf("[!] На данной АЗС найден только %s, для %s используется средняя цена.%n",
+                    altName, isPlusRequested ? "премиального" : "обычного");
+        }
+    }
+
+    public double getAveragePrice(JSONObject avgMap, int id) {
+        if (avgMap == null) return 0;
+        int baseId = (id > 100) ? id / 10 : id; // на случай виртуальных ID
+        JSONObject item = avgMap.optJSONObject(String.valueOf(baseId));
         return (item != null) ? item.optDouble("avg", 0) : 0;
     }
-
-    public Fuel getBestFuelData(FuelData data, int id, String name) {
-        double price = 0;
-        String type = "";
-
-        if (data.getAzsList() != null && data.getAzsList().length() > 0) {
-            price = findExactPrice(data.getAzsList().getJSONObject(0), id, name);
-            if (price > 0) type = "[Точная]";
-        }
-
-        if (price <= 0) {
-            price = getAveragePrice(data.getAvgPricesMap(), id);
-            if (price > 0) type = "[Средняя]";
-        }
-
-        return (price > 0) ? new Fuel(name, price, type) : null;
-    }
-
 }

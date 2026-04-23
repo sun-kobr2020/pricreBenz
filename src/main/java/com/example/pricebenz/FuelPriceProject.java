@@ -25,7 +25,7 @@ public class FuelPriceProject {
 
             // 2. ПОЛУЧЕНИЕ ДАННЫХ
             // Выбираем ID топлива для приоритетного поиска (например, 11 для Аи-95)
-            int targetFuelId = 11;
+            int targetFuelId = 8;
             String targetFuelName = FuelConfig.FUEL_MAP.get(targetFuelId);
 
             // fetchAllData делает сразу два запроса к API (список АЗС и средние цены)
@@ -40,7 +40,7 @@ public class FuelPriceProject {
             System.out.println("\n--- СВОДКА ЦЕН ПО ВСЕМ ТИПАМ ---");
             for (var entry : FuelConfig.FUEL_MAP.entrySet()) {
                 // Метод getBestFuelData сам выбирает между [Точной] и [Средней] ценой
-                Fuel fuel = service.getBestFuelData(data, entry.getKey(), entry.getValue());
+                Fuel fuel = service.getBestFuelData(data, entry.getKey(), entry.getValue(), false);
                 if (fuel != null) {
                     System.out.println(fuel); // Используется переопределенный метод Fuel.toString()
                 }
@@ -48,7 +48,7 @@ public class FuelPriceProject {
 
             // 4. РАСЧЕТ ПОЕЗДКИ
             // Имитируем ситуацию: проехали 550 км (с 50000 до 50550) и залили 40 литров
-            Fuel targetFuel = service.getBestFuelData(data, targetFuelId, targetFuelName);
+            Fuel targetFuel = service.getBestFuelData(data, targetFuelId, targetFuelName, true);
             if (targetFuel != null) {
                 // Reporter берет на себя всю математику через TripCalculator и вывод чека
                 reporter.printTripReport(targetFuel, 40.0, 50550, 50000);
